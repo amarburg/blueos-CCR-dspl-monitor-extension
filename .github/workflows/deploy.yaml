@@ -1,0 +1,104 @@
+name: BlueOS Light Monitor
+
+# Tests the extension and the light controller's telemetry logic, then builds
+# the extension's Docker image for the Pi (arm/v7 and arm64) and pushes it to
+# Docker Hub, which is where BlueOS installs extensions from.
+#
+# Pushing needs two repository secrets (Settings -> Secrets and variables ->
+# Actions):
+#
+#   DOCKER_USERNAME   the Docker Hub account, lower case (e.g. zhrandell)
+#   DOCKER_PASSWORD   a Docker Hub *access token* for it, not the password
+#
+# Without them the image is still built (so a broken Dockerfile still fails
+# the run) but not pushed.
+#
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install --upgrade pip pytest pyserial==3.5
+      - name: Extension tests
+        run: python -m pytest -q light_monitor/tests
+
+  image:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      HAVE_DOCKER: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tags
+        id: tags
+        run: |
+          user="${{ secrets.DOCKER_USERNAME }}"
+          image="${user:-local}/blueos-light-monitor"
+          ref="${GITHUB_REF#refs/*/}"
+          if [[ "$GITHUB_REF" == refs/tags/light-monitor-v* ]]; then
+            v="${ref#light-monitor-v}"
+            echo "tags=$image:$v,$image:latest" >> "$GITHUB_OUTPUT"
+          else
+            safe="$(echo "$ref" | tr '/' '-' | tr -cd 'A-Za-z0-9_.-')"
+            echo "tags=$image:$safe" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.HAVE_DOCKER == 'true'
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: blueos_extensions/light_monitor
+          platforms: linux/arm/v7,linux/arm64/v8
+          push: ${{ env.HAVE_DOCKER == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+      - name: Not pushed
+        if: env.HAVE_DOCKER != 'true'
+        run: echo "::notice::Built but not pushed -- add DOCKER_USERNAME and DOCKER_PASSWORD secrets to push to Docker Hub."
+
+
+#
+# Sample from BlueOS template
+#
+
+# name: Deploy BlueOS Extension Image
+
+# on:
+#   # Automatically run when a new commit is added to the repository
+#   #push:
+#   # Automatically run when someone makes a Pull Request to the repository
+#   #pull_request:
+#   # Run manually
+#   workflow_dispatch:
+#   # NOTE: caches may be removed if not run weekly
+#   #  -> may be worth scheduling for every 6 days
+
+# jobs:
+#   deploy-docker-image:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Deploy BlueOS Extension
+#         uses: BlueOS-community/Deploy-BlueOS-Extension@v1
+#         with:
+#           docker-username: ${{ secrets.DOCKER_USERNAME }}
+#           docker-password: ${{ secrets.DOCKER_PASSWORD }}
+#           github-token: ${{ secrets.GITHUB_TOKEN }}
+#           image-name: ${{ vars.IMAGE_NAME || 'quickstart-test' }}
+#           author: ${{ vars.MY_NAME }}
+#           author-email: ${{ vars.MY_EMAIL }}
+#           maintainer: ${{ vars.ORG_NAME }}
+#           maintainer-email: ${{ vars.ORG_EMAIL }}

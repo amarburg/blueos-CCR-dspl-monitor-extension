@@ -1,48 +1,110 @@
-FROM alpine:3.18.3
+# BlueOS Light Monitor -- the Lutris DeepSea lights, live, recorded and in MAVLink.
+#
+# Built for the Pi by .github/workflows/blueos-light-monitor.yml (no Docker is
+# needed on a laptop) and pushed to Docker Hub, which is where BlueOS installs
+# extensions from. Install it on the vehicle from BlueOS -> Extensions ->
+# Installed -> "+" -- see README.md.
+#
+# python:3.11-slim is published for linux/arm/v7 (Pi 3 and the 32-bit BlueOS
+# images) and linux/arm64/v8 (Pi 4/5 on 64-bit), so one tag serves both.
 
-RUN apk update && apk add nginx
+FROM python:3.11-slim
 
-# Move our nginx configuration to the standard nginx path
-COPY files/nginx.conf /etc/nginx/nginx.conf
+ENV PYTHONUNBUFFERED=1 \
+    LIGHT_MONITOR_PORT=9420 \
+    LIGHT_MONITOR_DATA=/data \
+    LIGHT_MONITOR_MODE=auto \
+    MAVLINK2REST_URL=http://127.0.0.1:6040
 
-# Add our static files to a common folder to be provided by nginx
-RUN mkdir -p /site
-COPY files/register_service /site/register_service
-COPY site/ /site/
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY light_monitor /app/light_monitor
 
-# Copy everything for your application
-COPY files/entrypoint.sh /entrypoint.sh
-
-# Add docker configuration
+# --- What BlueOS reads ----------------------------------------------------
+#
+# permissions -- passed to `docker create`:
+#   Privileged + /dev:/dev  the light controller's USB serial ports, including
+#                           when it is unplugged and comes back. BlueOS's own
+#                           documented pattern for serial devices.
+#   NetworkMode host        mavlink2rest at 127.0.0.1:6040 on BlueOS 1.4 and
+#                           1.5 alike, and this page on a fixed port (9420)
+#                           that rov_flight_ops can find.
+#   the data bind           the recording, on the Pi, where BlueOS's File
+#                           Browser shows it (userdata/light_monitor) and where
+#                           it survives updates of the extension.
+LABEL version="0.1.0"
 LABEL permissions='{\
-  "ExposedPorts": {\
-    "80/tcp": {}\
-  },\
   "HostConfig": {\
-    "PortBindings": {\
-      "80/tcp": [\
-        {\
-          "HostPort": ""\
-        }\
-      ]\
-    }\
+    "Privileged": true,\
+    "NetworkMode": "host",\
+    "Binds": [\
+      "/dev:/dev",\
+      "/usr/blueos/userdata/light_monitor:/data"\
+    ]\
   }\
 }'
-LABEL authors='[\
-    {\
-        "name": "John Doe",\
-        "email": "john.doe@gmail.com"\
-    }\
-]'
-LABEL company='{\
-    "about": "This is just an example",\
-    "name": "ACME Corporation",\
-    "email": "acme@corporation.com"\
+LABEL type="device-integration"
+LABEL tags='["lights", "lighting", "telemetry", "logging", "deepsea"]'
+LABEL authors='[{"name": "Zachary Randell", "email": ""}]'
+LABEL company='{"about": "Coastal Climate Resilience program", "name": "Seattle Aquarium", "email": ""}'
+LABEL readme="https://raw.githubusercontent.com/Seattle-Aquarium/CCR_ROV_survey_methods/main/blueos_extensions/light_monitor/README.md"
+LABEL links='{\
+  "source": "https://github.com/Seattle-Aquarium/CCR_ROV_survey_methods/tree/main/blueos_extensions/light_monitor",\
+  "support": "https://github.com/Seattle-Aquarium/CCR_development/issues"\
 }'
-LABEL readme="https://raw.githubusercontent.com/patrickelectric/blueos-extension-template/master/README.md"
-LABEL type="example"
-LABEL tags='[\
-  "example"\
-]'
+LABEL requirements="core >= 1.1"
 
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "-m", "light_monitor"]
+
+#----
+#
+
+# FROM alpine:3.18.3
+
+# RUN apk update && apk add nginx
+
+# # Move our nginx configuration to the standard nginx path
+# COPY files/nginx.conf /etc/nginx/nginx.conf
+
+# # Add our static files to a common folder to be provided by nginx
+# RUN mkdir -p /site
+# COPY files/register_service /site/register_service
+# COPY site/ /site/
+
+# # Copy everything for your application
+# COPY files/entrypoint.sh /entrypoint.sh
+
+# # Add docker configuration
+# LABEL permissions='{\
+#   "ExposedPorts": {\
+#     "80/tcp": {}\
+#   },\
+#   "HostConfig": {\
+#     "PortBindings": {\
+#       "80/tcp": [\
+#         {\
+#           "HostPort": ""\
+#         }\
+#       ]\
+#     }\
+#   }\
+# }'
+# LABEL authors='[\
+#     {\
+#         "name": "John Doe",\
+#         "email": "john.doe@gmail.com"\
+#     }\
+# ]'
+# LABEL company='{\
+#     "about": "This is just an example",\
+#     "name": "ACME Corporation",\
+#     "email": "acme@corporation.com"\
+# }'
+# LABEL readme="https://raw.githubusercontent.com/patrickelectric/blueos-extension-template/master/README.md"
+# LABEL type="example"
+# LABEL tags='[\
+#   "example"\
+# ]'
+
+# ENTRYPOINT ["/entrypoint.sh"]
